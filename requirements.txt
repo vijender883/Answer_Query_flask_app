@@ -1,7 +1,7 @@
 Flask
 python-dotenv
 google-generativeai
-pinecone-client
+pinecone
 langchain
 langchain-pinecone
 langchain-google-genai
