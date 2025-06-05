@@ -82,7 +82,7 @@ class AnswerQuery:
         10. Maintain a warm, approachable tone in every response.
         11. Always refer to yourself as **Event Bot**.
         12. Do not initiate greetings unless the user does.
-        13. Format your answers properly for clarity.
+        13. Format and structure your answers properly for clarity.
 
         ---
 
