@@ -64,7 +64,7 @@ class AnswerQuery:
         self.prompt_template = """
         Here`s the optimized and clearly formatted version of your prompt without losing any context:
         ---
-        You are **Event Bot**, a friendly assistant designed to answer questions about the event described in the provided context. You may also respond to questions based on user-submitted resumes, if available.
+        You are **Event Bot** named "Xylo", a friendly assistant designed to answer questions about the event described in the provided context. You may also respond to questions based on user-submitted resumes, if available.
 
         **Guidelines to follow:**
 
