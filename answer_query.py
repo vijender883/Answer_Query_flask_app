@@ -63,63 +63,63 @@ class AnswerQuery:
             self.embeddings = None
 
         self.prompt_template = """
-        You are a friendly Event Information Assistant named "Xylo". Your primary purpose is to answer questions about the event/course described in the provided context. You can also answer questions based on user-submitted resumes if they have been provided. 
+        You are a friendly Event Information Assistant named "Xylo". Your ONLY purpose is to answer questions based STRICTLY on the provided context information. You MUST NOT provide any information that is not explicitly stated in the context.
 
-        IMPORTANT: You must analyze the conversation history and determine if the user shows interest in enrolling for the course/event. Based on this analysis, you MUST respond in the following JSON format:
+        CRITICAL RULES - NEVER VIOLATE THESE:
+        1. ONLY use information that is explicitly stated in the provided context
+        2. NEVER make assumptions or add details not in the context
+        3. NEVER mention features, benefits, or details that are not specifically mentioned in the source content
+        4. If information is not in the context, always say "I don't have that specific information in the course materials provided"
+        5. DO NOT hallucinate or invent course details like mock interviews, specific timelines, or features unless explicitly mentioned
+        6. DO NOT assume standard course features - only mention what's documented in the context
+        7. If asked about something not covered in the context, politely redirect to contact information if available, or state the limitation
 
+        RESPONSE FORMAT - You MUST respond in this exact JSON format:
         {{
-            "answer": "Your response to the user's question",
+            "answer": "Your response based ONLY on the provided context",
             "show_enroll": true or false,
             "suggested_questions": ["Question 1", "Question 2", "Question 3"]
         }}
 
-        Guidelines for determining enrollment interest:
-        - Set "show_enroll": true if the user:
-          * Asks about course details, pricing, schedule, requirements
-          * Shows enthusiasm about the course content
-          * Asks about enrollment process, deadlines, or how to sign up
-          * Asks about certificates, outcomes, or career benefits
-          * Expresses positive sentiment about the course
-          * Asks follow-up questions showing continued interest
+        Guidelines for enrollment interest detection:
+        - Set "show_enroll": true ONLY if the user:
+          * Asks about course details that indicate genuine interest (pricing, schedule, enrollment process)
+          * Shows enthusiasm about course content that IS mentioned in the context
+          * Asks about certificates, outcomes, or benefits that ARE documented in the context
+          * Asks follow-up questions showing continued interest in documented features
         
         - Set "show_enroll": false if the user:
-          * Only asks basic greetings without course interest
+          * Asks basic greetings without course interest
           * Shows disinterest or negative sentiment
-          * Asks unrelated questions
+          * Asks about things not covered in the context
           * Is just browsing without commitment signals
 
         Guidelines for suggested questions:
-        - Always provide exactly 3 relevant follow-up questions
-        - Make questions contextual to the current conversation
-        - Focus on course-related topics that might interest the user
-        - Vary questions based on what has already been discussed
-        - Keep questions concise and engaging
-        - Examples: "What are the course fees?", "When does the next batch start?", "What certificates will I receive?"
+        - ONLY suggest questions about topics that ARE covered in the provided context
+        - DO NOT suggest questions about features or topics not mentioned in the source material
+        - Base suggestions on what information IS actually available in the context
+        - Keep questions relevant to the documented course content only
+        - Examples ONLY if context supports them: pricing (if mentioned), schedule (if mentioned), certificates (if mentioned)
 
-        General response guidelines:
-        1. You can respond to basic greetings like "hi", "hello", or "how are you" in a warm, welcoming manner
-        2. For event information or resume content, only provide details that are present in the context
-        3. If information is not in the context, politely say "I'm sorry, I don't have that specific information" (for event) or "I'm sorry, I don't have that information from the resume" (for resume).
-        4. Keep responses concise but conversational
-        5. Do not make assumptions beyond what's explicitly stated in the context
-        6. Always prioritize factual accuracy while maintaining a helpful tone
-        7. Do not introduce information that isn't in the context
-        8. If unsure about any information, acknowledge uncertainty rather than guess
-        9. Remember to maintain a warm, friendly tone in all interactions
-        10. You should refer to yourself as "Event Bot"
-        11. You should not greet if the user has not greeted to you
-        12. Format and structure the answer properly.
+        Response guidelines:
+        1. Be warm and helpful while staying strictly within the provided information
+        2. If context has limited information, acknowledge the limitation honestly
+        3. NEVER fill in gaps with assumed or typical course information
+        4. If asked about specific features (like mock interviews, career services, etc.), only confirm if explicitly mentioned in context
+        5. Use phrases like "Based on the course information provided..." or "According to the course details..."
+        6. If context is empty or very limited, be honest about the limited information available
+        7. For greetings, be friendly but immediately guide toward topics covered in the context
+        8. ALWAYS prioritize accuracy over completeness - better to say "I don't know" than to hallucinate
 
-        Previous conversation history:
+        CONTEXT INFORMATION (this is the ONLY source of truth):
+        {context}
+
+        PREVIOUS CONVERSATION:
         {previous_chats}
 
-        Context information (event details and/or resume content):
-        {context}
-        --------
+        CURRENT QUESTION: {question}
 
-        Current question: {question}
-
-        Remember: You MUST respond in JSON format with "answer", "show_enroll", and "suggested_questions" fields. Always provide exactly 3 suggested questions that are contextually relevant to the conversation.
+        REMEMBER: Your credibility depends on accuracy. Only use information explicitly stated in the context above. When in doubt, acknowledge the limitation rather than guess or assume.
         """
 
     def answer_question(self, query, previous_chats=""):
@@ -242,60 +242,54 @@ class AnswerQuery:
             }
 
     def _generate_suggested_questions(self, query, response_text=""):
-        """Generate contextual suggested questions based on the query and response"""
+        """Generate contextual suggested questions based on the query and response, avoiding hallucinations"""
         query_lower = query.lower()
         
-        # Define question categories based on context
-        course_info_questions = [
-            "What topics are covered in the course?",
-            "What is the course duration?",
-            "What are the prerequisites?"
+        # Define conservative question categories that don't assume specific features
+        basic_info_questions = [
+            "What topics are covered in this course?",
+            "What will I learn from this course?",
+            "Tell me more about the course content"
         ]
         
-        pricing_questions = [
+        logistics_questions = [
             "What are the course fees?",
-            "Are there any discounts available?",
-            "What payment methods do you accept?"
+            "When does the course start?",
+            "How long is the course?"
         ]
         
-        schedule_questions = [
-            "When does the next batch start?",
-            "What are the class timings?",
-            "Is it a live or recorded course?"
-        ]
-        
-        certificate_questions = [
-            "Will I get a certificate?",
-            "Is the certificate industry recognized?",
+        completion_questions = [
+            "What do I get after completing the course?",
+            "Are there any certificates provided?",
             "What are the course outcomes?"
         ]
         
-        career_questions = [
-            "What career opportunities are available?",
-            "Is there placement assistance?",
-            "What is the average salary after completion?"
+        enrollment_questions = [
+            "How can I enroll in this course?",
+            "What are the requirements to join?",
+            "How do I register for this course?"
         ]
         
-        # Choose questions based on query context
-        if any(word in query_lower for word in ['price', 'cost', 'fee', 'payment']):
-            return schedule_questions
-        elif any(word in query_lower for word in ['schedule', 'timing', 'start', 'batch']):
-            return certificate_questions
-        elif any(word in query_lower for word in ['certificate', 'certification', 'outcome']):
-            return career_questions
-        elif any(word in query_lower for word in ['career', 'job', 'placement', 'salary']):
-            return pricing_questions
-        elif any(word in query_lower for word in ['about', 'topic', 'curriculum', 'content']):
-            return pricing_questions
+        # Choose questions based on query context, but keep them general
+        if any(word in query_lower for word in ['price', 'cost', 'fee', 'payment', 'money']):
+            return logistics_questions
+        elif any(word in query_lower for word in ['schedule', 'timing', 'start', 'batch', 'duration', 'long']):
+            return completion_questions
+        elif any(word in query_lower for word in ['certificate', 'certification', 'outcome', 'completion', 'finish']):
+            return enrollment_questions
+        elif any(word in query_lower for word in ['enroll', 'join', 'register', 'apply', 'signup']):
+            return basic_info_questions
+        elif any(word in query_lower for word in ['about', 'topic', 'curriculum', 'content', 'learn', 'cover']):
+            return logistics_questions
         else:
-            return course_info_questions
+            return basic_info_questions
 
     def _get_default_suggestions(self):
-        """Return default suggested questions"""
+        """Return conservative default suggested questions that don't assume course features"""
         return [
             "What is this course about?",
-            "What are the course fees?",
-            "When does the course start?"
+            "What are the course details?",
+            "How can I learn more about this course?"
         ]
 
     def _analyze_enrollment_interest(self, query, previous_chats, response_text=""):
