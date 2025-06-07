@@ -1,5 +1,6 @@
 # answer_query.py
 import os
+import json
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -62,8 +63,40 @@ class AnswerQuery:
             self.embeddings = None
 
         self.prompt_template = """
-        You are a friendly Event Information Assistant named "Xylo". Your primary purpose is to answer questions about the event described in the provided context. You can also answer questions based on user-submitted resumes if they have been provided. Follow these guidelines:
+        You are a friendly Event Information Assistant named "Xylo". Your primary purpose is to answer questions about the event/course described in the provided context. You can also answer questions based on user-submitted resumes if they have been provided. 
 
+        IMPORTANT: You must analyze the conversation history and determine if the user shows interest in enrolling for the course/event. Based on this analysis, you MUST respond in the following JSON format:
+
+        {{
+            "answer": "Your response to the user's question",
+            "show_enroll": true or false,
+            "suggested_questions": ["Question 1", "Question 2", "Question 3"]
+        }}
+
+        Guidelines for determining enrollment interest:
+        - Set "show_enroll": true if the user:
+          * Asks about course details, pricing, schedule, requirements
+          * Shows enthusiasm about the course content
+          * Asks about enrollment process, deadlines, or how to sign up
+          * Asks about certificates, outcomes, or career benefits
+          * Expresses positive sentiment about the course
+          * Asks follow-up questions showing continued interest
+        
+        - Set "show_enroll": false if the user:
+          * Only asks basic greetings without course interest
+          * Shows disinterest or negative sentiment
+          * Asks unrelated questions
+          * Is just browsing without commitment signals
+
+        Guidelines for suggested questions:
+        - Always provide exactly 3 relevant follow-up questions
+        - Make questions contextual to the current conversation
+        - Focus on course-related topics that might interest the user
+        - Vary questions based on what has already been discussed
+        - Keep questions concise and engaging
+        - Examples: "What are the course fees?", "When does the next batch start?", "What certificates will I receive?"
+
+        General response guidelines:
         1. You can respond to basic greetings like "hi", "hello", or "how are you" in a warm, welcoming manner
         2. For event information or resume content, only provide details that are present in the context
         3. If information is not in the context, politely say "I'm sorry, I don't have that specific information" (for event) or "I'm sorry, I don't have that information from the resume" (for resume).
@@ -72,32 +105,40 @@ class AnswerQuery:
         6. Always prioritize factual accuracy while maintaining a helpful tone
         7. Do not introduce information that isn't in the context
         8. If unsure about any information, acknowledge uncertainty rather than guess
-        9. You may suggest a few general questions users might want to ask about the event
-        10. Remember to maintain a warm, friendly tone in all interactions
-        11. You should refer to yourself as "Event Bot"
-        12. You should not greet if the user has not greeted to you
-        13. Format and stucture the answer properly.
-        
-        Remember: While you can be conversational, your primary role is providing accurate information based on the context provided (event details and/or resume content).
+        9. Remember to maintain a warm, friendly tone in all interactions
+        10. You should refer to yourself as "Event Bot"
+        11. You should not greet if the user has not greeted to you
+        12. Format and structure the answer properly.
+
+        Previous conversation history:
+        {previous_chats}
 
         Context information (event details and/or resume content):
         {context}
         --------
 
-        Now, please answer this question: {question}
+        Current question: {question}
 
+        Remember: You MUST respond in JSON format with "answer", "show_enroll", and "suggested_questions" fields. Always provide exactly 3 suggested questions that are contextually relevant to the conversation.
         """
 
-    def answer_question(self, query):
+    def answer_question(self, query, previous_chats=""):
         """Process query using agent system first, then RAG if needed"""
         try:
             # First, let the agent analyze the query
             agent_response = self.agent.process_query(query)
             
-            # If agent has a result from a tool, return it
+            # If agent has a result from a tool, format it as JSON
             if agent_response["source"] == "tool" and agent_response["result"]:
+                # Analyze interest based on query and previous chats
+                show_enroll = self._analyze_enrollment_interest(query, previous_chats, agent_response["result"])
+                # Generate suggested questions based on the query and response
+                suggested_questions = self._generate_suggested_questions(query, agent_response["result"])
+                
                 return {
-                    "text": agent_response["result"],
+                    "answer": agent_response["result"],
+                    "show_enroll": show_enroll,
+                    "suggested_questions": suggested_questions,
                     "source": agent_response["source"],
                     "error": False
                 }
@@ -105,11 +146,11 @@ class AnswerQuery:
             # If we need to use RAG, continue with normal processing
             # Check if required components are initialized
             if self.pc is None:
-                return {"text": "Pinecone database is not available.", "error": True}
+                return {"answer": "Pinecone database is not available.", "show_enroll": False, "error": True}
             if self.client is None:
-                return {"text": "Gemini language model is not available.", "error": True}
+                return {"answer": "Gemini language model is not available.", "show_enroll": False, "error": True}
             if self.embeddings is None:
-                return {"text": "Embedding model is not available.", "error": True}
+                return {"answer": "Embedding model is not available.", "show_enroll": False, "error": True}
 
             # Get vector store
             try:
@@ -120,7 +161,7 @@ class AnswerQuery:
                     text_key="text"
                 )
             except Exception as e:
-                return {"text": f"Error accessing vector store: {str(e)}", "error": True}
+                return {"answer": f"Error accessing vector store: {str(e)}", "show_enroll": False, "error": True}
                 
             # Search for similar content
             results = vectorstore.similarity_search_with_score(query, k=5)
@@ -134,7 +175,11 @@ class AnswerQuery:
 
             # Generate prompt
             prompt_template_obj = ChatPromptTemplate.from_template(self.prompt_template)
-            prompt = prompt_template_obj.format(context=context_text, question=query)
+            prompt = prompt_template_obj.format(
+                context=context_text, 
+                question=query, 
+                previous_chats=previous_chats or "No previous conversation history."
+            )
 
             # Generate response from LLM
             response_genai = self.client.generate_content(prompt)
@@ -142,12 +187,39 @@ class AnswerQuery:
             # Process LLM response
             raw_response = response_genai.text
             
+            # Try to parse JSON response from LLM
+            try:
+                # Clean the response to extract JSON
+                json_start = raw_response.find('{')
+                json_end = raw_response.rfind('}') + 1
+                
+                if json_start != -1 and json_end != -1:
+                    json_str = raw_response[json_start:json_end]
+                    parsed_response = json.loads(json_str)
+                    
+                    answer = parsed_response.get("answer", raw_response)
+                    show_enroll = parsed_response.get("show_enroll", False)
+                    suggested_questions = parsed_response.get("suggested_questions", self._get_default_suggestions())
+                else:
+                    # Fallback if JSON parsing fails
+                    answer = raw_response
+                    show_enroll = self._analyze_enrollment_interest(query, previous_chats, raw_response)
+                    suggested_questions = self._generate_suggested_questions(query, raw_response)
+                    
+            except json.JSONDecodeError:
+                # Fallback if JSON parsing fails
+                answer = raw_response
+                show_enroll = self._analyze_enrollment_interest(query, previous_chats, raw_response)
+                suggested_questions = self._generate_suggested_questions(query, raw_response)
+            
             # If we had a tool error, mention it
             if agent_response["source"] == "rag_fallback" and "tool_error" in agent_response:
-                raw_response = f"I tried to use a specialized tool for this query but encountered an issue. Here's what I found in my general knowledge:\n\n{raw_response}"
+                answer = f"I tried to use a specialized tool for this query but encountered an issue. Here's what I found in my general knowledge:\n\n{answer}"
 
             return {
-                "text": raw_response,
+                "answer": answer,
+                "show_enroll": show_enroll,
+                "suggested_questions": suggested_questions,
                 "source": "rag",
                 "error": False
             }
@@ -163,9 +235,96 @@ class AnswerQuery:
             traceback.print_exc()
 
             return {
-                "text": error_message,
+                "answer": error_message,
+                "show_enroll": False,
+                "suggested_questions": self._get_default_suggestions(),
                 "error": True
             }
+
+    def _generate_suggested_questions(self, query, response_text=""):
+        """Generate contextual suggested questions based on the query and response"""
+        query_lower = query.lower()
+        
+        # Define question categories based on context
+        course_info_questions = [
+            "What topics are covered in the course?",
+            "What is the course duration?",
+            "What are the prerequisites?"
+        ]
+        
+        pricing_questions = [
+            "What are the course fees?",
+            "Are there any discounts available?",
+            "What payment methods do you accept?"
+        ]
+        
+        schedule_questions = [
+            "When does the next batch start?",
+            "What are the class timings?",
+            "Is it a live or recorded course?"
+        ]
+        
+        certificate_questions = [
+            "Will I get a certificate?",
+            "Is the certificate industry recognized?",
+            "What are the course outcomes?"
+        ]
+        
+        career_questions = [
+            "What career opportunities are available?",
+            "Is there placement assistance?",
+            "What is the average salary after completion?"
+        ]
+        
+        # Choose questions based on query context
+        if any(word in query_lower for word in ['price', 'cost', 'fee', 'payment']):
+            return schedule_questions
+        elif any(word in query_lower for word in ['schedule', 'timing', 'start', 'batch']):
+            return certificate_questions
+        elif any(word in query_lower for word in ['certificate', 'certification', 'outcome']):
+            return career_questions
+        elif any(word in query_lower for word in ['career', 'job', 'placement', 'salary']):
+            return pricing_questions
+        elif any(word in query_lower for word in ['about', 'topic', 'curriculum', 'content']):
+            return pricing_questions
+        else:
+            return course_info_questions
+
+    def _get_default_suggestions(self):
+        """Return default suggested questions"""
+        return [
+            "What is this course about?",
+            "What are the course fees?",
+            "When does the course start?"
+        ]
+
+    def _analyze_enrollment_interest(self, query, previous_chats, response_text=""):
+        """Analyze if user shows interest in enrollment based on query and chat history"""
+        # Convert to lowercase for analysis
+        query_lower = query.lower()
+        previous_lower = previous_chats.lower() if previous_chats else ""
+        
+        # Keywords that indicate enrollment interest
+        interest_keywords = [
+            'enroll', 'register', 'sign up', 'join', 'apply', 'admission',
+            'price', 'cost', 'fee', 'payment', 'schedule', 'timing',
+            'certificate', 'certification', 'duration', 'requirement',
+            'prerequisite', 'benefit', 'outcome', 'career', 'job',
+            'deadline', 'start date', 'when does', 'how to join',
+            'interested', 'want to', 'would like', 'tell me more',
+            'details about', 'more information'
+        ]
+        
+        # Check current query
+        query_has_interest = any(keyword in query_lower for keyword in interest_keywords)
+        
+        # Check previous chats
+        history_has_interest = any(keyword in previous_lower for keyword in interest_keywords)
+        
+        # Additional context checks
+        asking_followup = len(previous_chats.strip()) > 0 and ('?' in query or 'how' in query_lower or 'what' in query_lower)
+        
+        return query_has_interest or history_has_interest or asking_followup
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -214,23 +373,31 @@ def answer():
 
     data = request.json
     query = data.get('query')
+    previous_chats = data.get('previous_chats', '')  # New field for chat history
 
     if not query:
         return jsonify({"error": "Missing query parameter"}), 400
 
     # Check if answer system is initialized
     if answer_system is None:
-        return jsonify("Service unavailable due to configuration issues."), 503
+        return jsonify({"error": "Service unavailable due to configuration issues."}), 503
 
-    # Get answer
-    result = answer_system.answer_question(query)
+    # Get answer with previous chats context
+    result = answer_system.answer_question(query, previous_chats)
 
     # Return response
     if result.get("error", False):
-        return jsonify(result["text"]), 500
+        return jsonify({
+            "answer": result["answer"],
+            "show_enroll": result.get("show_enroll", False)
+        }), 500
     else:
-        # Only return the text without any metadata
-        return jsonify(result["text"])
+        # Return JSON response with answer, show_enroll, and suggested_questions
+        return jsonify({
+            "answer": result["answer"],
+            "show_enroll": result.get("show_enroll", False),
+            "suggested_questions": result.get("suggested_questions", [])
+        })
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -248,9 +415,6 @@ def health_check():
         return jsonify(health_status), 200
     else:
         return jsonify(health_status), 503
-    
-
-
 
 if __name__ == '__main__':
     # Get port from environment variable or use default
