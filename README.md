@@ -25,13 +25,55 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+---
+
 #### 🪟 Windows PowerShell:
+
+**Open PowerShell:**
+
+* Search for "PowerShell" in the Start menu and open **Windows PowerShell**.
+* Navigate to your desired folder:
+
+```powershell
+cd C:\Users\YourUser\Documents\GitHub
+```
+
+**Create a Virtual Environment:**
 
 ```powershell
 python -m venv venv
+```
+
+This creates a folder named `venv` in your project directory.
+
+**Activate the Virtual Environment:**
+
+```powershell
 .\venv\Scripts\Activate.ps1
+```
+
+> **Note:** If you encounter an execution policy error, run:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+Then try activating again.
+To revert later:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Default
+```
+
+You should now see `(venv)` in your prompt.
+
+**Install Required Packages:**
+
+```powershell
 pip install -r requirements.txt
 ```
+
+---
 
 #### 🍏 macOS Terminal:
 
@@ -40,6 +82,8 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+---
 
 #### 🐧 Linux Terminal:
 
@@ -68,13 +112,11 @@ MCP_PORT=8000
 
 ### 4. Run the App
 
-Run the following command to start the API:
-
 ```bash
 python answer_query.py
 ```
 
-The server will run at:
+Server will run at:
 **[http://127.0.0.1:5000](http://127.0.0.1:5000)**
 
 ---
